@@ -45,7 +45,6 @@ public class StorageCipher18Implementation implements StorageCipher {
                 return;
             } catch (Exception e) {
                 Log.e("StorageCipher18Impl", "unwrap key failed", e);
-                encrypted = new byte[0];
             }
         }
 
