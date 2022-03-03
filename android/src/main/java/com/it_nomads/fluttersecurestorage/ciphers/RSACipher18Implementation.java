@@ -1,11 +1,14 @@
 package com.it_nomads.fluttersecurestorage.ciphers;
 
-import android.annotation.TargetApi;
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.res.Configuration;
+import android.content.res.Resources;
 import android.os.Build;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
+import android.security.keystore.StrongBoxUnavailableException;
+import android.util.Log;
 
 import java.math.BigInteger;
 import java.security.Key;
@@ -23,10 +26,10 @@ import javax.security.auth.x500.X500Principal;
 
 class RSACipher18Implementation {
 
+    private final String KEY_ALIAS;
     private static final String KEYSTORE_PROVIDER_ANDROID = "AndroidKeyStore";
     private static final String TYPE_RSA = "RSA";
-    private final String KEY_ALIAS;
-    private final Context context;
+    private Context context;
 
 
     public RSACipher18Implementation(Context context) throws Exception {
@@ -123,43 +126,15 @@ class RSACipher18Implementation {
      */
     private void setLocale(Locale locale) {
         Locale.setDefault(locale);
-        Configuration config = context.getResources().getConfiguration();
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            setSystemLocale(config, locale);
-            context.createConfigurationContext(config);
-        } else {
-            setSystemLocaleLegacy(config, locale);
-            setContextConfigurationLegacy(context, config);
-        }
-    }
-
-    @SuppressWarnings("deprecation")
-    private void setContextConfigurationLegacy(Context context, Configuration config) {
-        context.getResources().updateConfiguration(config, context.getResources().getDisplayMetrics());
-    }
-
-    @SuppressWarnings("deprecation")
-    private void setSystemLocaleLegacy(Configuration config, Locale locale) {
+        Resources resources = context.getResources();
+        Configuration config = resources.getConfiguration();
         config.locale = locale;
+        resources.updateConfiguration(config, resources.getDisplayMetrics());
     }
 
-    @TargetApi(Build.VERSION_CODES.N)
-    private void setSystemLocale(Configuration config, Locale locale) {
-        config.setLocale(locale);
-    }
-
-    @SuppressWarnings("deprecation")
-    private AlgorithmParameterSpec makeAlgorithmParameterSpecLegacy(Context context, Calendar start, Calendar end) {
-        return new android.security.KeyPairGeneratorSpec.Builder(context)
-                .setAlias(KEY_ALIAS)
-                .setSubject(new X500Principal("CN=" + KEY_ALIAS))
-                .setSerialNumber(BigInteger.valueOf(1))
-                .setStartDate(start.getTime())
-                .setEndDate(end.getTime())
-                .build();
-    }
-
+    @SuppressLint("NewApi")
     private void createKeys(Context context) throws Exception {
+        Log.i("fluttersecurestorage", "Creating keys!");
         final Locale localeBeforeFakingEnglishLocale = Locale.getDefault();
         try {
             setLocale(Locale.ENGLISH);
@@ -172,7 +147,13 @@ class RSACipher18Implementation {
             AlgorithmParameterSpec spec;
 
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
-                spec = makeAlgorithmParameterSpecLegacy(context, start, end);
+                spec = new android.security.KeyPairGeneratorSpec.Builder(context)
+                        .setAlias(KEY_ALIAS)
+                        .setSubject(new X500Principal("CN=" + KEY_ALIAS))
+                        .setSerialNumber(BigInteger.valueOf(1))
+                        .setStartDate(start.getTime())
+                        .setEndDate(end.getTime())
+                        .build();
             } else {
                 KeyGenParameterSpec.Builder builder = new KeyGenParameterSpec.Builder(KEY_ALIAS, KeyProperties.PURPOSE_DECRYPT | KeyProperties.PURPOSE_ENCRYPT)
                         .setCertificateSubject(new X500Principal("CN=" + KEY_ALIAS))
@@ -183,11 +164,30 @@ class RSACipher18Implementation {
                         .setCertificateNotBefore(start.getTime())
                         .setCertificateNotAfter(end.getTime());
 
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    builder.setIsStrongBoxBacked(true);
+                }
+
                 spec = builder.build();
             }
-
-            kpGenerator.initialize(spec);
-            kpGenerator.generateKeyPair();
+            try {
+                Log.i("fluttersecurestorage", "Initializing");
+                kpGenerator.initialize(spec);
+                Log.i("fluttersecurestorage", "Generating key pair");
+                kpGenerator.generateKeyPair();
+            } catch (StrongBoxUnavailableException se) {
+                spec = new KeyGenParameterSpec.Builder(KEY_ALIAS, KeyProperties.PURPOSE_DECRYPT | KeyProperties.PURPOSE_ENCRYPT)
+                        .setCertificateSubject(new X500Principal("CN=" + KEY_ALIAS))
+                        .setDigests(KeyProperties.DIGEST_SHA256)
+                        .setBlockModes(KeyProperties.BLOCK_MODE_ECB)
+                        .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_RSA_PKCS1)
+                        .setCertificateSerialNumber(BigInteger.valueOf(1))
+                        .setCertificateNotBefore(start.getTime())
+                        .setCertificateNotAfter(end.getTime())
+                        .build();
+                kpGenerator.initialize(spec);
+                kpGenerator.generateKeyPair();
+            }
         } finally {
             setLocale(localeBeforeFakingEnglishLocale);
         }
